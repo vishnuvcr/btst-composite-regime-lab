@@ -27,7 +27,6 @@ def fit_rank_model(train: pd.DataFrame, families: list[str], seed: int):
     if not rows:
         return None, None
     d = pd.concat(rows, ignore_index=True)
-    # Shared model: family identity and its candidate score are explicit inputs.
     fam_cols = [f"family_{f}" for f in families]
     for f in families:
         d[f"family_{f}"] = (d.family == f).astype(float)
@@ -64,7 +63,6 @@ def predict_family_rows(model, cols, frame: pd.DataFrame, families: list[str]):
 
 
 def tune_thresholds(val: pd.DataFrame, families: list[str], max_positions: int):
-    # Validation-only calibration. Thresholds are intentionally simple to reduce overfit.
     if val.empty:
         return {"min_pred": 0.0, "min_score": .60, "max_per_regime": 1}
     candidates = np.unique(np.quantile(val.predicted_return.dropna(), [0.50, .60, .70, .80, .90, .95]))
@@ -73,7 +71,6 @@ def tune_thresholds(val: pd.DataFrame, families: list[str], max_positions: int):
         z = val[(val.candidate_score >= .60) & (val.predicted_return >= thr)].copy()
         if z.empty:
             continue
-        # Select one strategy per stock/date: the ranking model's top setup.
         z = z.sort_values(["date", "symbol", "predicted_return"], ascending=[True, True, False])
         z = z.drop_duplicates(["date", "symbol"])
         daily = z.groupby("date").btst_return.mean()
@@ -83,6 +80,21 @@ def tune_thresholds(val: pd.DataFrame, families: list[str], max_positions: int):
         if best is None or score > best[0]:
             best = (score, float(thr))
     return {"min_pred": best[1] if best else 0.0, "min_score": .60, "max_per_regime": 1}
+
+
+def select_top_by_date(frame: pd.DataFrame, max_positions: int) -> pd.DataFrame:
+    """Select the top predicted setups while preserving the date column.
+
+    Do not use GroupBy.apply(..., include_groups=False) here: newer pandas
+    versions exclude the grouping column from the applied frame, which caused
+    the production KeyError on `date` when the result was later projected.
+    """
+    if frame.empty:
+        return frame.copy()
+    parts = []
+    for _, group in frame.groupby("date", sort=False):
+        parts.append(group.nlargest(max_positions, "predicted_return"))
+    return pd.concat(parts, ignore_index=True) if parts else frame.iloc[0:0].copy()
 
 
 def execute(selected: pd.DataFrame, cfg: dict):
@@ -154,18 +166,12 @@ def run(config_path: str):
         params = tune_thresholds(vp, families, int(cfg["portfolio"].get("max_positions", 10)))
         tuning_rows.append({"fold": fid, **params})
 
-        # Abstention: no trade unless predicted executable return clears the validation threshold.
         tp = predict_family_rows(model, cols, test, families)
         tp = tp[(tp.candidate_score >= params["min_score"]) & (tp.predicted_return >= params["min_pred"])].copy()
-        # Only one strategy is allowed per stock/date. Then rank stocks cross-sectionally.
         tp = tp.sort_values(["date", "symbol", "predicted_return"], ascending=[True, True, False])
         tp = tp.drop_duplicates(["date", "symbol"])
         if not tp.empty:
-            # Keep the best K executable setups per day; this is a stock-level confidence ranking.
-            tp = tp.groupby("date", group_keys=False).apply(
-                lambda g: g.nlargest(int(cfg["portfolio"].get("max_positions", 10)), "predicted_return"),
-                include_groups=False,
-            ).reset_index(drop=True)
+            tp = select_top_by_date(tp, int(cfg["portfolio"].get("max_positions", 10)))
             pred_rows.append(tp[["date", "symbol", "regime", "family", "candidate_score", "predicted_return"]])
         t = execute(tp, cfg)
         if not t.empty:
