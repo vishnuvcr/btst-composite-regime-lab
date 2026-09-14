@@ -45,6 +45,23 @@ jobs:
           for f in files[:8]:
               print('SAMPLE:', os.path.basename(f))
           PY
+      - name: Inspect staged CSV schema
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob, os, pandas as pd
+          files = sorted(glob.glob('data/daily/*.csv'))
+          stock = [f for f in files if '_10yr_daily' in os.path.basename(f).lower()][:3]
+          print('Candidate stock files:', [os.path.basename(f) for f in stock])
+          for f in stock:
+              print('\nFILE:', f)
+              try:
+                  z = pd.read_csv(f, nrows=3)
+                  print('COLUMNS:', list(z.columns))
+                  print(z.head(2).to_string(index=False))
+              except Exception as e:
+                  print('READ ERROR:', repr(e))
+          PY
       - name: Apply workflow date/symbol overrides
         env:
           MAX_SYMBOLS: ${{ inputs.max_symbols }}
@@ -63,10 +80,10 @@ jobs:
           p.write_text(yaml.safe_dump(c, sort_keys=False))
           print(c['data'])
           PY
+      - name: Run regression checks
+        run: python -m compileall -q src && pytest -q
       - name: Run strict BTST composite
         run: python src/btst_composite_btst.py --config config/composite.yaml
-      - name: Run regression checks
-        run: python -m compileall -q src
       - name: Publish research artifacts
         if: always()
         uses: actions/upload-artifact@v4
