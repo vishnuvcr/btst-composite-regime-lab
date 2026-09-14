@@ -1,0 +1,57 @@
+name: BTST Composite Regime Research
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_symbols:
+        description: 'Maximum symbols (0 = config default)'
+        required: false
+        default: '0'
+      start_date:
+        description: 'Start date YYYY-MM-DD (blank = config)'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date YYYY-MM-DD (blank = config)'
+        required: false
+        default: ''
+
+jobs:
+  research:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Download dataset
+        run: |
+          python - <<'PY'
+          import kagglehub
+          p = kagglehub.dataset_download('siddharthhirvaniya/nifty-50-stocks-data-01-jan-2015-to-01-sept-2026')
+          print('Dataset:', p)
+          PY
+      - name: Locate and copy data
+        run: |
+          python - <<'PY'
+          import glob, os, shutil
+          import kagglehub
+          p = kagglehub.dataset_download('siddharthhirvaniya/nifty-50-stocks-data-01-jan-2015-to-01-sept-2026')
+          files = glob.glob(os.path.join(p, '**', '*.csv'), recursive=True)
+          os.makedirs('data/daily', exist_ok=True)
+          for f in files:
+              shutil.copy2(f, os.path.join('data/daily', os.path.basename(f)))
+          print('CSV files copied:', len(files))
+          PY
+      - name: Run composite regime tournament
+        run: python src/btst_composite_btst.py --config config/composite.yaml
+      - name: Run regression checks
+        run: python -m compileall -q src
+      - name: Publish research artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: btst-composite-regime-results
+          path: docs/
