@@ -22,6 +22,7 @@ research:
   min_validation_strategy_obs: 30
   horizons: [1]
   strategy_selection_quantile: 0.65
+  max_families_per_regime: 1
 
 costs:
   slippage_bps_per_side: 5.0
