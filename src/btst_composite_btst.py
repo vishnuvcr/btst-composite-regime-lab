@@ -50,7 +50,6 @@ def _read_robust(fp):
         return date_col, open_col, high_col, low_col, close_col, vol_col
 
     date_col, open_col, high_col, low_col, close_col, vol_col = map_columns(x)
-
     if not all([date_col, open_col, high_col, low_col, close_col]):
         try:
             raw = pd.read_csv(fp, header=None, nrows=20, encoding="utf-8-sig")
@@ -66,14 +65,12 @@ def _read_robust(fp):
                         break
         except Exception:
             pass
-
     if not date_col:
         for c in x.columns:
             p = pd.to_datetime(x[c], errors="coerce", format="mixed")
             if len(p) and p.notna().mean() >= 0.70:
                 date_col = c
                 break
-
     if not all([date_col, open_col, high_col, low_col, close_col]):
         return None
 
@@ -86,7 +83,6 @@ def _read_robust(fp):
     })
     if vol_col:
         y["volume"] = pd.to_numeric(x[vol_col], errors="coerce")
-
     y = y.dropna(subset=["date", "open", "high", "low", "close"])
     if y.empty:
         return None
@@ -96,7 +92,6 @@ def _read_robust(fp):
         y["symbol"] = x.loc[y.index, sym_col].astype(str).str.upper().str.replace("-", "_", regex=False)
     else:
         y["symbol"] = Path(fp).stem.upper().replace("-", "_")
-
     y = y[y["symbol"].notna() & (y["symbol"].str.len() > 0)]
     if y.empty:
         return None
@@ -115,8 +110,7 @@ def load_universe(pattern, max_files=None):
         else:
             frames.append(z)
     if not frames:
-        sample = ", ".join(rejected[:10])
-        raise RuntimeError(f"No usable OHLCV files matched {pattern}. Rejected {len(rejected)} files. Samples: {sample}")
+        raise RuntimeError(f"No usable OHLCV files matched {pattern}. Rejected {len(rejected)} files. Samples: {', '.join(rejected[:10])}")
     out = pd.concat(frames, ignore_index=True)
     return out.sort_values(["symbol", "date"]).drop_duplicates(["symbol", "date"], keep="last").reset_index(drop=True)
 
@@ -136,11 +130,17 @@ def execute_btst(selected, cfg):
     tc = float(cfg["costs"].get("transaction_cost_bps_per_side", 8)) / 10000
     max_pos = int(cfg["portfolio"].get("max_positions", 10))
     gross = float(cfg["portfolio"].get("max_gross_exposure", .95))
+    cap = float(cfg["portfolio"].get("max_position_weight", 1.0))
     sm = float(cfg["execution"].get("stop_atr_mult", 1.5))
     tm = float(cfg["execution"].get("target_atr_mult", 2.0))
     rows = []
     for date, g in selected.groupby("date"):
-        for _, r in g.nlargest(max_pos, "predicted_return").iterrows():
+        picks = g.nlargest(max_pos, "predicted_return")
+        n = len(picks)
+        if n == 0:
+            continue
+        weight = min(cap, gross / n)
+        for _, r in picks.iterrows():
             if not np.isfinite(r.next_open):
                 continue
             entry = float(r.close) * (1 + sl)
@@ -155,13 +155,10 @@ def execute_btst(selected, cfg):
                 exit_px, reason = float(r.next_open), "next_open"
             exit_px *= 1 - sl
             net = exit_px / entry - 1 - 2 * tc
-            rows.append({"date": date, "symbol": r.symbol, "family": r.family, "regime": r.regime, "predicted_return": r.predicted_return, "net_return": net, "reason": reason})
-    out = pd.DataFrame(rows)
-    if out.empty:
-        return out
-    out["weight"] = gross / out.groupby("date").symbol.transform("count").clip(lower=1)
-    out["weighted_return"] = out.net_return * out.weight
-    return out
+            rows.append({"date": date, "symbol": r.symbol, "family": r.family, "regime": r.regime,
+                         "predicted_return": r.predicted_return, "net_return": net, "reason": reason,
+                         "weight": weight, "weighted_return": net * weight})
+    return pd.DataFrame(rows)
 
 
 def run(config_path):
@@ -171,7 +168,6 @@ def run(config_path):
     df = load_universe(dc["daily_glob"], dc.get("max_symbols"))
     df = df[(df.date >= pd.Timestamp(dc["start_date"])) & (df.date <= pd.Timestamp(dc["end_date"]))]
     print(f"Loaded {len(df):,} rows across {df.symbol.nunique():,} symbols, {df.date.min().date()} to {df.date.max().date()}")
-
     market = None
     if glob.glob(dc.get("market_glob", ""), recursive=True):
         market = load_universe(dc["market_glob"], 1)
@@ -182,7 +178,6 @@ def run(config_path):
     x = add_features(df, market)
     x["btst_return"] = x["next_open"] / x["close"] - 1
     x = add_candidate_scores(x, families)
-
     folds = build_folds(pd.DatetimeIndex(sorted(x.date.unique())), cfg)
     seed = int(cfg["research"].get("random_state", 42))
     q = float(cfg["research"].get("strategy_selection_quantile", .65))
@@ -200,7 +195,6 @@ def run(config_path):
         train["regime"] = train.date.map(trreg)
         val["regime"] = val.date.map(fwreg)
         test["regime"] = test.date.map(fwreg)
-
         models = fit_family_models(train, families, FEATURES, seed + fid)
         vp = []
         for fam, (model, cols) in models.items():
@@ -212,12 +206,10 @@ def run(config_path):
         if not vp:
             continue
         vp = pd.concat(vp, ignore_index=True)
-
         routing, _ = choose_regimes(vp, families, q, maxpr)
         fallback = vp[vp.candidate_score >= .60].groupby("family").btst_return.mean().sort_values(ascending=False).head(maxpr).index.tolist() or [families[0]]
         for regime, chosen in routing.items():
             route_rows.append({"fold": fid, "regime": regime, "families": ",".join(chosen)})
-
         parts = []
         for fam, (model, cols) in models.items():
             z = test.copy()
@@ -232,7 +224,6 @@ def run(config_path):
         pred = pred[(pred.candidate_score >= .60) & (pred.predicted_return > 0)]
         if not pred.empty:
             pred_rows.append(pred[["date", "symbol", "regime", "family", "candidate_score", "predicted_return"]])
-
         t = execute_btst(pred, cfg)
         if not t.empty:
             t["fold"] = fid
