@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from btst_composite import add_features, strategy_score
+from btst_strategy_ranking_v2 import select_top_by_date
 
 
 def synthetic():
@@ -30,3 +31,21 @@ def test_strategy_scores_are_bounded():
         assert len(s)>0
         assert s.min() >= 0
         assert s.max() <= 1
+
+
+def test_strategy_ranking_preserves_date_column():
+    dates = pd.date_range('2025-01-01', periods=3, freq='B')
+    rows = []
+    for d in dates:
+        for i in range(3):
+            rows.append({
+                'date': d,
+                'symbol': f'S{i}',
+                'predicted_return': float(i + 1),
+            })
+    x = pd.DataFrame(rows)
+    out = select_top_by_date(x, 2)
+    assert 'date' in out.columns
+    assert len(out) == 6
+    assert out.groupby('date').size().eq(2).all()
+    assert set(out.predicted_return) == {2.0, 3.0}
