@@ -19,7 +19,7 @@ on:
 jobs:
   research:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,14 +27,8 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: pip install -r requirements.txt
-      - name: Download dataset
-        run: |
-          python - <<'PY'
-          import kagglehub
-          p = kagglehub.dataset_download('siddharthhirvaniya/nifty-50-stocks-data-01-jan-2015-to-01-sept-2026')
-          print('Dataset:', p)
-          PY
-      - name: Locate and copy data
+      - name: Download and stage dataset once
+        shell: bash
         run: |
           python - <<'PY'
           import glob, os, shutil
@@ -44,9 +38,28 @@ jobs:
           os.makedirs('data/daily', exist_ok=True)
           for f in files:
               shutil.copy2(f, os.path.join('data/daily', os.path.basename(f)))
-          print('CSV files copied:', len(files))
+          print('Dataset:', p)
+          print('CSV files staged:', len(files))
           PY
-      - name: Run composite regime tournament
+      - name: Apply workflow date/symbol overrides
+        env:
+          MAX_SYMBOLS: ${{ inputs.max_symbols }}
+          START_DATE: ${{ inputs.start_date }}
+          END_DATE: ${{ inputs.end_date }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os, yaml
+          p=Path('config/composite.yaml')
+          c=yaml.safe_load(p.read_text())
+          ms=os.getenv('MAX_SYMBOLS','0'); sd=os.getenv('START_DATE',''); ed=os.getenv('END_DATE','')
+          if ms and ms != '0': c['data']['max_symbols']=int(ms)
+          if sd: c['data']['start_date']=sd
+          if ed: c['data']['end_date']=ed
+          p.write_text(yaml.safe_dump(c, sort_keys=False))
+          print(c['data'])
+          PY
+      - name: Run strict BTST composite
         run: python src/btst_composite_btst.py --config config/composite.yaml
       - name: Run regression checks
         run: python -m compileall -q src
