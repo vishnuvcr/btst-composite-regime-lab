@@ -123,16 +123,33 @@ def proxy_market(df):
     return pd.DataFrame({"date": close.index, "close": close.values})
 
 
+def strict_net(row, cfg):
+    """Realizable close-to-next-open BTST label, including configured stop/target and costs."""
+    sl = float(cfg["costs"].get("slippage_bps_per_side", 5)) / 10000
+    tc = float(cfg["costs"].get("transaction_cost_bps_per_side", 8)) / 10000
+    sm = float(cfg["execution"].get("stop_atr_mult", 1.5))
+    tm = float(cfg["execution"].get("target_atr_mult", 2.0))
+    entry = float(row.close) * (1 + sl)
+    atr = float(np.clip(row.atr_pct, .005, .20))
+    stop = entry * (1 - sm * atr)
+    target = entry * (1 + tm * atr)
+    # Daily OHLC cannot reveal intraday ordering when both are touched; stop-first is conservative.
+    if row.next_low <= stop:
+        exit_px, reason = stop, "stop"
+    elif row.next_high >= target:
+        exit_px, reason = target, "target"
+    else:
+        exit_px, reason = float(row.next_open), "next_open"
+    exit_px *= 1 - sl
+    return exit_px / entry - 1 - 2 * tc, reason
+
+
 def execute_btst(selected, cfg):
     if selected.empty:
         return pd.DataFrame()
-    sl = float(cfg["costs"].get("slippage_bps_per_side", 5)) / 10000
-    tc = float(cfg["costs"].get("transaction_cost_bps_per_side", 8)) / 10000
     max_pos = int(cfg["portfolio"].get("max_positions", 10))
     gross = float(cfg["portfolio"].get("max_gross_exposure", .95))
     cap = float(cfg["portfolio"].get("max_position_weight", 1.0))
-    sm = float(cfg["execution"].get("stop_atr_mult", 1.5))
-    tm = float(cfg["execution"].get("target_atr_mult", 2.0))
     rows = []
     for date, g in selected.groupby("date"):
         picks = g.nlargest(max_pos, "predicted_return")
@@ -143,18 +160,7 @@ def execute_btst(selected, cfg):
         for _, r in picks.iterrows():
             if not np.isfinite(r.next_open):
                 continue
-            entry = float(r.close) * (1 + sl)
-            atr = float(np.clip(r.atr_pct, .005, .20))
-            stop = entry * (1 - sm * atr)
-            target = entry * (1 + tm * atr)
-            if r.next_low <= stop:
-                exit_px, reason = stop, "stop"
-            elif r.next_high >= target:
-                exit_px, reason = target, "target"
-            else:
-                exit_px, reason = float(r.next_open), "next_open"
-            exit_px *= 1 - sl
-            net = exit_px / entry - 1 - 2 * tc
+            net, reason = strict_net(r, cfg)
             rows.append({"date": date, "symbol": r.symbol, "family": r.family, "regime": r.regime,
                          "predicted_return": r.predicted_return, "net_return": net, "reason": reason,
                          "weight": weight, "weighted_return": net * weight})
@@ -176,7 +182,8 @@ def run(config_path):
         print("Using cross-sectional proxy market index (no NIFTY 50 file supplied).")
 
     x = add_features(df, market)
-    x["btst_return"] = x["next_open"] / x["close"] - 1
+    # IMPORTANT: the ML target must match the actual BTST execution rule, not merely next-open gap.
+    x["btst_return"] = x.apply(lambda r: strict_net(r, cfg)[0], axis=1)
     x = add_candidate_scores(x, families)
     folds = build_folds(pd.DatetimeIndex(sorted(x.date.unique())), cfg)
     seed = int(cfg["research"].get("random_state", 42))
@@ -221,6 +228,7 @@ def run(config_path):
             continue
         pred = pd.concat(parts, ignore_index=True)
         pred = pd.concat([g[g.family.isin(routing.get(reg, fallback))] for reg, g in pred.groupby("regime", dropna=False)], ignore_index=True)
+        # Model now predicts executable net return; keep only positive expected-value setups.
         pred = pred[(pred.candidate_score >= .60) & (pred.predicted_return > 0)]
         if not pred.empty:
             pred_rows.append(pred[["date", "symbol", "regime", "family", "candidate_score", "predicted_return"]])
