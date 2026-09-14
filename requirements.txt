@@ -1,0 +1,10 @@
+numpy>=1.26
+pandas>=2.2
+scipy>=1.12
+scikit-learn>=1.4
+PyYAML>=6.0
+lightgbm>=4.3
+yfinance>=0.2.40
+kagglehub>=0.3
+pyarrow>=15.0
+pytest>=8.0
