@@ -1,0 +1,58 @@
+data:
+  timezone: Asia/Kolkata
+  daily_glob: data/daily/**/*.csv
+  market_glob: data/market/**/NIFTY 50_day.csv
+  start_date: '2015-01-01'
+  end_date: '2026-09-14'
+  min_history_days: 252
+  min_price: 20
+  min_turnover_inr: 10000000
+  max_symbols: 1000
+  kaggle_dataset: siddharthhirvaniya/nifty-50-stocks-data-01-jan-2015-to-01-sept-2026
+
+research:
+  train_years: 4
+  validation_months: 12
+  test_months: 12
+  step_months: 12
+  embargo_days: 5
+  random_state: 42
+  n_clusters: 6
+  min_train_strategy_obs: 100
+  min_validation_strategy_obs: 30
+  horizons: [1]
+  strategy_selection_quantile: 0.65
+
+costs:
+  slippage_bps_per_side: 5.0
+  transaction_cost_bps_per_side: 8.0
+
+portfolio:
+  initial_capital: 1000000
+  max_positions: 10
+  max_gross_exposure: 0.95
+  risk_per_trade: 0.005
+  max_position_weight: 0.15
+
+execution:
+  entry: close
+  exit: next_open
+  stop_mode: ATR
+  stop_atr_mult: 1.5
+  target_mode: ATR
+  target_atr_mult: 2.0
+  max_holding_sessions: 1
+
+strategies:
+  enabled:
+    - momentum
+    - mean_reversion
+    - gap_continuation
+    - gap_fade
+    - closing_strength
+    - breakout
+    - volatility_expansion
+    - relative_strength
+    - trend
+    - volume_anomaly
+    - hybrid
