@@ -1,16 +1,18 @@
 # BTST Composite Regime Lab
 
-A separate research engine for **conditional BTST strategy selection**.
+A separate research engine for **conditional BTST strategy selection**. It is intentionally separate from the earlier BTST Strategy Lab so we can test the composite idea without contaminating the original experiments.
 
-## Research thesis
+## Core idea
 
-The earlier BTST experiments showed an important asymmetry: individual strategy families could have exceptional months even when their unconditional OOS performance was negative. This project tests whether those conditional edges can be harvested by learning **which strategy works best for which market/stock state** rather than blindly combining all strategies.
+The earlier experiments showed that individual BTST strategy families could have extraordinary months while being negative over the full sample. A simple average of those strategies is not the objective. This project asks a stronger question:
 
-Pipeline:
+> **Given today's market regime and the stock's current state, which strategy family has historically worked best in comparable conditions?**
 
-`daily OHLCV -> state/features -> strategy candidates -> regime/archetype -> meta-model predicts strategy return -> select strategy/stock -> portfolio -> OOS metrics`
+The router therefore chooses a strategy rather than blindly combining all signals.
 
-## Candidate BTST families
+`OHLCV -> causal features -> candidate strategy scores -> market regime -> family-specific ML models -> validation-only regime router -> stock selection -> BTST portfolio -> untouched OOS metrics`
+
+## Strategy families
 
 - momentum
 - mean reversion
@@ -22,49 +24,57 @@ Pipeline:
 - relative strength
 - trend
 - volume anomaly
-- hybrid momentum/quality
+- hybrid
 
-## Anti-leakage design
+## Regime model
 
-- Features are known at the signal close only.
-- BTST entry is the **same-session close**; exit is next-session open by default.
-- Alternative next-session-close evaluation is retained as a diagnostic, not mixed into selection.
-- Strategy outcomes are computed only after the signal date.
-- Walk-forward train/validation/test splits are chronological.
-- Regime scaler/clustering is fitted on train only and transformed forward.
-- Meta-model selection/tuning occurs on validation only.
-- Test windows are untouched until final scoring.
-- Portfolio selection never uses realized test returns.
-- Simultaneous positions share capital; observations are never compounded sequentially.
+Market regimes are learned with K-means using training-period information only. State variables include market momentum, market volatility, market trend, breadth and stock volatility. Stock-state features include short/medium-term returns, gap, candle location/body, ATR, volume anomaly, moving-average distance and cross-sectional ranks.
 
-## Objective
+For each walk-forward fold, the validation period determines which strategy family is preferred **within each regime**. That routing table is then frozen and applied to the next untouched test period.
 
-The research target is to investigate whether a robust composite can approach or exceed **30% in individual months** while maintaining positive long-run expectancy and controlled drawdown. 30% monthly return is a target for discovery, **not a hard-coded optimization objective or a guaranteed outcome**.
+## Strict BTST execution
 
-## Data
+The main composite runner uses the conventional overnight BTST interpretation:
 
-The default workflow downloads the same genuine NSE daily source used in the prior BTST research:
+- signal and entry: day-t close
+- exit: day-t+1 open
+- optional ATR stop/target: evaluated using the next session high/low
+- if both stop and target are touched in the same daily bar, stop is assumed first
+- slippage and transaction costs are charged on both sides
+- simultaneous positions share the configured gross exposure
 
-` s iddharthhirvaniya/nifty-50-stocks-data-01-jan-2015-to-01-sept-2026 `
+Daily OHLC cannot reveal the exact intraday order of stop/target events; later 5-minute execution refinement is therefore required before any live-use conclusion.
 
-and optionally augments it with Yahoo Finance for current/extended symbols. The workflow records the universe and survivorship limitations in its manifest.
+## Anti-leakage rules
 
-## Outputs
+- Features use information available by the signal close only.
+- Realized BTST returns are labels, never features.
+- Regime fitting is train-only and transformed forward.
+- Family models are trained only on the historical training window.
+- Strategy/regime routing is selected on validation only.
+- The test period is never used to choose families, thresholds or model parameters.
+- Monthly returns are compounded from daily portfolio returns.
+- Survivorship bias and corporate-action/data-quality limitations remain explicit research risks.
 
-The Actions workflow publishes:
+## 30% target
 
-- `btst_composite_metrics.csv`
-- `btst_composite_monthly.csv`
-- `btst_composite_oos_trades.csv`
-- `btst_composite_fold_diagnostics.csv`
-- `btst_composite_strategy_regime.csv`
-- `btst_composite_manifest.json`
+The research target is to discover whether the conditional composite can produce **30%+ individual months** without simply overfitting those months. 30% per month is **not guaranteed and is not hard-coded into the model**. A strategy that achieves 30% in-sample and fails untouched OOS is considered a failure.
+
+The real acceptance test is stronger: positive OOS expectancy, acceptable drawdown, stability across years/regimes, cost sensitivity, and performance that survives an unseen final period.
 
 ## Run
 
 ```bash
 pip install -r requirements.txt
-python src/btst_composite.py --config config/composite.yaml
+python src/btst_composite_btst.py --config config/composite.yaml
 ```
 
-Results must be judged from untouched OOS artifacts and then subjected to robustness tests before any claim of deployability.
+## Key outputs
+
+- `docs/btst_composite_btst_metrics.csv`
+- `docs/btst_composite_btst_monthly.csv`
+- `docs/btst_composite_btst_oos_trades.csv`
+- `docs/btst_composite_btst_routing.csv`
+- `docs/btst_composite_btst_predictions.csv`
+
+The older `src/btst_composite.py` remains as a general composite research engine; the `btst_composite_btst.py` runner is the one to use for the strict overnight BTST experiment.
