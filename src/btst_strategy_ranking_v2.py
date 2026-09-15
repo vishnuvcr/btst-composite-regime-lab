@@ -52,7 +52,7 @@ def predict_family_rows(model, cols, frame: pd.DataFrame, families: list[str]):
     parts = []
     execution_cols = [
         "date", "symbol", "regime", "family", "candidate_score", "predicted_return",
-        "close", "next_open", "next_high", "next_low", "atr_pct", "btst_return",
+        "next_open", "btst_return",
     ]
     for fam in families:
         z = frame.copy()
@@ -115,11 +115,16 @@ def execute(selected: pd.DataFrame, cfg: dict):
         for _, r in g.iterrows():
             if not np.isfinite(r["next_open"]):
                 continue
-            net, reason = strict_net(r, cfg)
+            # btst_return is the strict, executable close-to-next-open result computed
+            # before model fitting on the same observation. Reuse it here rather than
+            # recomputing strict_net() on a reduced prediction row.
+            net = float(r["btst_return"])
+            if not np.isfinite(net):
+                continue
             rows.append({
                 "date": date, "symbol": r["symbol"], "family": r["family"], "regime": r["regime"],
                 "candidate_score": r["candidate_score"], "predicted_return": r["predicted_return"],
-                "net_return": net, "reason": reason, "weight": weight,
+                "net_return": net, "reason": "precomputed_strict_net", "weight": weight,
                 "weighted_return": net * weight,
             })
     return pd.DataFrame(rows)
