@@ -83,18 +83,19 @@ def tune_thresholds(val: pd.DataFrame, families: list[str], max_positions: int):
 
 
 def select_top_by_date(frame: pd.DataFrame, max_positions: int) -> pd.DataFrame:
-    """Select the top predicted setups while preserving the date column.
-
-    Do not use GroupBy.apply(..., include_groups=False) here: newer pandas
-    versions exclude the grouping column from the applied frame, which caused
-    the production KeyError on `date` when the result was later projected.
-    """
+    """Select top predicted setups per date while preserving `date` as a column."""
     if frame.empty:
         return frame.copy()
+    required = {"date", "predicted_return"}
+    missing = required.difference(frame.columns)
+    if missing:
+        raise KeyError(f"select_top_by_date missing columns: {sorted(missing)}")
     parts = []
     for _, group in frame.groupby("date", sort=False):
         parts.append(group.nlargest(max_positions, "predicted_return"))
-    return pd.concat(parts, ignore_index=True) if parts else frame.iloc[0:0].copy()
+    if not parts:
+        return frame.iloc[0:0].copy()
+    return pd.concat(parts, ignore_index=True)
 
 
 def execute(selected: pd.DataFrame, cfg: dict):
