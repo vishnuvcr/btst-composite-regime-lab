@@ -30,7 +30,13 @@ def fit_rank_model(train: pd.DataFrame, families: list[str], seed: int):
     fam_cols = [f"family_{f}" for f in families]
     for f in families:
         d[f"family_{f}"] = (d.family == f).astype(float)
-    cols = FEATURES + [f"score_{f}" for f in families] + fam_cols
+
+    regime_values = sorted(pd.Series(d["regime"]).dropna().unique().tolist())
+    regime_cols = [f"regime_{int(r)}" for r in regime_values]
+    for r in regime_values:
+        d[f"regime_{int(r)}"] = (d.regime == r).astype(float)
+
+    cols = FEATURES + [f"score_{f}" for f in families] + fam_cols + regime_cols
     X = d[cols].astype(float).fillna(0)
     y = d.btst_return.clip(-.25, .25).astype(float)
     if LGBMRegressor is not None:
@@ -54,11 +60,15 @@ def predict_family_rows(model, cols, frame: pd.DataFrame, families: list[str]):
         "date", "symbol", "regime", "family", "candidate_score", "predicted_return",
         "next_open", "btst_return",
     ]
+    regime_cols = [c for c in cols if c.startswith("regime_")]
     for fam in families:
         z = frame.copy()
         z["family"] = fam
         for f in families:
             z[f"family_{f}"] = (f == fam)
+        for rc in regime_cols:
+            rid = int(rc.split("_")[-1])
+            z[rc] = (z["regime"] == rid).astype(float)
         z["predicted_return"] = model.predict(z[cols].astype(float).fillna(0))
         z["candidate_score"] = z[f"score_{fam}"]
         parts.append(z[execution_cols])
@@ -68,7 +78,17 @@ def predict_family_rows(model, cols, frame: pd.DataFrame, families: list[str]):
 def tune_thresholds(val: pd.DataFrame, families: list[str], max_positions: int):
     if val.empty:
         return {"min_pred": 0.0, "min_score": .60, "max_per_regime": 1}
-    candidates = np.unique(np.quantile(val.predicted_return.dropna(), [0.50, .60, .70, .80, .90, .95]))
+
+    # Never use a negative predicted edge as a reason to trade.  The old tuner
+    # could select a negative threshold, forcing trades even when the model
+    # expected a loss.  Thresholds are selected only from non-negative model
+    # predictions and scored on executable validation returns.
+    preds = val.predicted_return.dropna()
+    preds = preds[preds >= 0]
+    if preds.empty:
+        return {"min_pred": np.inf, "min_score": .60, "max_per_regime": 1}
+
+    candidates = np.unique(np.quantile(preds, [0.50, .60, .70, .80, .90, .95]))
     best = None
     for thr in candidates:
         z = val[(val.candidate_score >= .60) & (val.predicted_return >= thr)].copy()
@@ -76,13 +96,16 @@ def tune_thresholds(val: pd.DataFrame, families: list[str], max_positions: int):
             continue
         z = z.sort_values(["date", "symbol", "predicted_return"], ascending=[True, True, False])
         z = z.drop_duplicates(["date", "symbol"])
+        z = select_top_by_date(z, max_positions)
         daily = z.groupby("date").btst_return.mean()
+        if daily.empty:
+            continue
         score = float(daily.mean() - 0.5 * daily.std())
-        coverage = len(z) / max(1, len(val.date.unique()) * 10)
+        coverage = len(z) / max(1, len(val.date.unique()) * max_positions)
         score -= max(0.0, 0.01 - coverage) * 0.2
         if best is None or score > best[0]:
             best = (score, float(thr))
-    return {"min_pred": best[1] if best else 0.0, "min_score": .60, "max_per_regime": 1}
+    return {"min_pred": best[1] if best else np.inf, "min_score": .60, "max_per_regime": 1}
 
 
 def select_top_by_date(frame: pd.DataFrame, max_positions: int) -> pd.DataFrame:
@@ -115,9 +138,6 @@ def execute(selected: pd.DataFrame, cfg: dict):
         for _, r in g.iterrows():
             if not np.isfinite(r["next_open"]):
                 continue
-            # btst_return is the strict, executable close-to-next-open result computed
-            # before model fitting on the same observation. Reuse it here rather than
-            # recomputing strict_net() on a reduced prediction row.
             net = float(r["btst_return"])
             if not np.isfinite(net):
                 continue
