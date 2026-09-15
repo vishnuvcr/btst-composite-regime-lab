@@ -42,8 +42,7 @@ jobs:
               shutil.copy2(f, os.path.join('data/daily', os.path.basename(f)))
           print('Dataset:', p)
           print('CSV files staged:', len(files))
-          for f in files[:8]:
-              print('SAMPLE:', os.path.basename(f))
+          for f in files[:8]: print('SAMPLE:', os.path.basename(f))
           PY
       - name: Inspect staged CSV schema
         shell: bash
@@ -55,12 +54,9 @@ jobs:
           print('Candidate stock files:', [os.path.basename(f) for f in stock])
           for f in stock:
               print('\nFILE:', f)
-              try:
-                  z = pd.read_csv(f, nrows=3)
-                  print('COLUMNS:', list(z.columns))
-                  print(z.head(2).to_string(index=False))
-              except Exception as e:
-                  print('READ ERROR:', repr(e))
+              z = pd.read_csv(f, nrows=3)
+              print('COLUMNS:', list(z.columns))
+              print(z.head(2).to_string(index=False))
           PY
       - name: Apply workflow date/symbol overrides
         env:
@@ -71,19 +67,19 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import os, yaml
-          p=Path('config/composite.yaml')
-          c=yaml.safe_load(p.read_text())
+          p=Path('config/composite.yaml'); c=yaml.safe_load(p.read_text())
           ms=os.getenv('MAX_SYMBOLS','0'); sd=os.getenv('START_DATE',''); ed=os.getenv('END_DATE','')
           if ms and ms != '0': c['data']['max_symbols']=int(ms)
           if sd: c['data']['start_date']=sd
           if ed: c['data']['end_date']=ed
-          p.write_text(yaml.safe_dump(c, sort_keys=False))
-          print(c['data'])
+          p.write_text(yaml.safe_dump(c, sort_keys=False)); print(c['data'])
           PY
       - name: Run regression checks
         run: python -m compileall -q src && pytest -q
       - name: Run strict BTST composite
         run: python src/btst_composite_btst.py --config config/composite.yaml
+      - name: Run strategy ranking v5
+        run: python src/btst_strategy_ranking_v5.py --config config/composite.yaml
       - name: Run strategy ranking v4
         run: python src/btst_strategy_ranking_v4.py --config config/composite.yaml
       - name: Run legacy strategy ranking v2
