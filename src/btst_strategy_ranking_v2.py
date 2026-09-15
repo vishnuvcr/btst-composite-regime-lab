@@ -50,6 +50,11 @@ def fit_rank_model(train: pd.DataFrame, families: list[str], seed: int):
 
 def predict_family_rows(model, cols, frame: pd.DataFrame, families: list[str]):
     parts = []
+    # Keep every field required by strict_net so prediction rows are directly executable.
+    execution_cols = [
+        "date", "symbol", "regime", "family", "candidate_score", "predicted_return",
+        "close", "next_open", "next_high", "next_low", "atr_pct", "btst_return",
+    ]
     for fam in families:
         z = frame.copy()
         z["family"] = fam
@@ -57,8 +62,7 @@ def predict_family_rows(model, cols, frame: pd.DataFrame, families: list[str]):
             z[f"family_{f}"] = (f == fam)
         z["predicted_return"] = model.predict(z[cols].astype(float).fillna(0))
         z["candidate_score"] = z[f"score_{fam}"]
-        parts.append(z[["date", "symbol", "regime", "family", "candidate_score", "predicted_return",
-                        "btst_return", "next_open", "next_high", "next_low", "atr_pct"]])
+        parts.append(z[execution_cols])
     return pd.concat(parts, ignore_index=True)
 
 
