@@ -84,7 +84,9 @@ jobs:
         run: python -m compileall -q src && pytest -q
       - name: Run strict BTST composite
         run: python src/btst_composite_btst.py --config config/composite.yaml
-      - name: Run strategy ranking v2
+      - name: Run strategy ranking v4
+        run: python src/btst_strategy_ranking_v4.py --config config/composite.yaml
+      - name: Run legacy strategy ranking v2
         run: python src/btst_strategy_ranking_v2.py --config config/composite.yaml
       - name: Run strict BTST benchmarks and oracle diagnostics
         run: python src/btst_benchmarks.py --config config/composite.yaml
