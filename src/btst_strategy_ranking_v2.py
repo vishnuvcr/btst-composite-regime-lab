@@ -50,7 +50,6 @@ def fit_rank_model(train: pd.DataFrame, families: list[str], seed: int):
 
 def predict_family_rows(model, cols, frame: pd.DataFrame, families: list[str]):
     parts = []
-    # Keep every field required by strict_net so prediction rows are directly executable.
     execution_cols = [
         "date", "symbol", "regime", "family", "candidate_score", "predicted_return",
         "close", "next_open", "next_high", "next_low", "atr_pct", "btst_return",
@@ -87,7 +86,7 @@ def tune_thresholds(val: pd.DataFrame, families: list[str], max_positions: int):
 
 
 def select_top_by_date(frame: pd.DataFrame, max_positions: int) -> pd.DataFrame:
-    """Select top predicted setups per date while preserving `date` as a column."""
+    """Select top predicted setups per date while preserving all columns."""
     if frame.empty:
         return frame.copy()
     required = {"date", "predicted_return"}
@@ -97,9 +96,7 @@ def select_top_by_date(frame: pd.DataFrame, max_positions: int) -> pd.DataFrame:
     parts = []
     for _, group in frame.groupby("date", sort=False):
         parts.append(group.nlargest(max_positions, "predicted_return"))
-    if not parts:
-        return frame.iloc[0:0].copy()
-    return pd.concat(parts, ignore_index=True)
+    return pd.concat(parts, ignore_index=True) if parts else frame.iloc[0:0].copy()
 
 
 def execute(selected: pd.DataFrame, cfg: dict):
@@ -116,12 +113,12 @@ def execute(selected: pd.DataFrame, cfg: dict):
             continue
         weight = min(cap, gross / n)
         for _, r in g.iterrows():
-            if not np.isfinite(r.next_open):
+            if not np.isfinite(r["next_open"]):
                 continue
             net, reason = strict_net(r, cfg)
             rows.append({
-                "date": date, "symbol": r.symbol, "family": r.family, "regime": r.regime,
-                "candidate_score": r.candidate_score, "predicted_return": r.predicted_return,
+                "date": date, "symbol": r["symbol"], "family": r["family"], "regime": r["regime"],
+                "candidate_score": r["candidate_score"], "predicted_return": r["predicted_return"],
                 "net_return": net, "reason": reason, "weight": weight,
                 "weighted_return": net * weight,
             })
